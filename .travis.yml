@@ -7,6 +7,7 @@ compiler:
 before_install:
   - uname
 #  - travis_retry sudo apt-get update -qq
+  - travis_retry sudo brew update
 #  - travis_retry sudo apt-get install -qq autotools-dev
 #  - travis_retry sudo apt-get install -qq libboost-all-dev
   - travis_retry sudo brew install boost
