@@ -5,7 +5,7 @@ os:
 compiler:
   - gcc
 before_install:
-  - sw_vers -productVersion
+  - uname
 #  - travis_retry sudo apt-get update -qq
 #  - travis_retry sudo apt-get install -qq autotools-dev
 #  - travis_retry sudo apt-get install -qq libboost-all-dev
