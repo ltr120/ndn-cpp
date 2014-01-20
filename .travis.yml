@@ -11,7 +11,7 @@ before_install:
 #  - travis_retry sudo apt-get install -qq libcrypto++-dev
 #  - travis_retry sudo apt-get install -qq libsqlite3-dev
 script:
-  - autoreconf -f --install
+  - autoconf -f --install
   - ./configure --without-c++11 --with-system-boost --with-tests
   - make
   - sudo make install
