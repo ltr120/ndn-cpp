@@ -5,10 +5,13 @@ os:
 compiler:
   - gcc
 before_install:
+  - sw_vers -productVersion
 #  - travis_retry sudo apt-get update -qq
 #  - travis_retry sudo apt-get install -qq autotools-dev
 #  - travis_retry sudo apt-get install -qq libboost-all-dev
+  - travis_retry sudo port install boost
 #  - travis_retry sudo apt-get install -qq libcrypto++-dev
+  - travis_retry sudo port install libcryptopp
 #  - travis_retry sudo apt-get install -qq libsqlite3-dev
 script:
   - autoreconf -f --install
