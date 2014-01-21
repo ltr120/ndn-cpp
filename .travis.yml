@@ -2,7 +2,6 @@ language: cpp
 os:
   - osx
 compiler:
-  - clang
   - gcc
 before_install:
 #  - travis_retry sudo apt-get update -qq
