@@ -1,11 +1,10 @@
 language: cpp
 os:
-#  - linux
+  - linux
   - osx
 compiler:
   - gcc
 before_install:
-  - uname
 #  - travis_retry sudo apt-get update -qq
   - travis_retry sudo brew update
 #  - travis_retry sudo apt-get install -qq autotools-dev
