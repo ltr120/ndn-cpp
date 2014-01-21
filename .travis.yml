@@ -4,10 +4,11 @@ os:
 compiler:
   - gcc
 env:
-  - CI=true
-  - TRAVIS=true
-  - USER=travis
-  - HOME=/Users/travis
+  global:
+    - CI=true
+    - TRAVIS=true
+    - USER=travis
+    - HOME=/Users/travis
 before_install:
 #  - travis_retry sudo apt-get update -qq
 #  - travis_retry sudo brew update
