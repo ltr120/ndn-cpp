@@ -5,12 +5,12 @@ compiler:
   - clang
 before_install:
 #  - travis_retry sudo apt-get update -qq
-  - travis_retry sudo brew update
+  - travis_retry brew update
 #  - travis_retry sudo apt-get install -qq autotools-dev
 #  - travis_retry sudo apt-get install -qq libboost-all-dev
-  - travis_retry sudo brew install boost
+  - travis_retry brew install boost
 #  - travis_retry sudo apt-get install -qq libcrypto++-dev
-  - travis_retry sudo brew install libcryptopp
+  - travis_retry brew install libcryptopp
 #  - travis_retry sudo apt-get install -qq libsqlite3-dev
 script:
   - autoreconf -f --install
