@@ -1,9 +1,10 @@
-language: cpp
+language: objectivec
 os:
   - linux
   - osx
 compiler:
   - clang
+  - gcc
 env:
   global:
     - CI=true
