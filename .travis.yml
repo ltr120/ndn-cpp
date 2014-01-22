@@ -1,16 +1,8 @@
-language: objectivec
+language: objective-c
 os:
-  - linux
   - osx
 compiler:
   - clang
-  - gcc
-env:
-  global:
-    - CI=true
-    - TRAVIS=true
-    - USER=travis
-    - HOME=/Users/travis
 before_install:
 #  - travis_retry sudo apt-get update -qq
 #  - travis_retry sudo brew update
