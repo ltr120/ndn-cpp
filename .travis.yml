@@ -17,5 +17,4 @@ script:
   - ./configure --without-c++11 --with-system-boost --with-tests
   - make
   - sudo make install
-  - sudo ldconfig
   - ./tests_boost/unit-tests -l all
