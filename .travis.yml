@@ -1,20 +1,30 @@
 language: objective-c
 os:
+  - linux
   - osx
 compiler:
+  - gcc
   - clang
 before_install:
+  - sudo ./.travis/before_install.sh
 #  - travis_retry sudo apt-get update -qq
-  - travis_retry brew update
+#  - travis_retry brew update
 #  - travis_retry sudo apt-get install -qq autotools-dev
 #  - travis_retry sudo apt-get install -qq libboost-all-dev
-  - travis_retry brew install boost
+#  - travis_retry brew install boost
 #  - travis_retry sudo apt-get install -qq libcrypto++-dev
-  - travis_retry brew install libcryptopp
+#  - travis_retry brew install libcryptopp
 #  - travis_retry sudo apt-get install -qq libsqlite3-dev
 script:
-  - autoreconf -f --install
-  - ./configure --without-c++11 --with-system-boost --with-tests
-  - make
-  - sudo make install
-  - ./tests_boost/unit-tests -l all
+  - sudo ./.travis/script.sh
+#  - autoreconf -f --install
+#  - ./configure --without-c++11 --with-system-boost --with-tests
+#  - make
+#  - sudo make install
+#  - ./tests_boost/unit-tests -l all
+matrix:
+  exclude:
+    - os: linux
+      compiler: clang
+    - os: osx
+      compiler: gcc
