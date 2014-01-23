@@ -13,3 +13,18 @@ script:
   - make
   - sudo make install
   - ./tests_boost/unit-tests -l all
+# Tutorial for setting up notifications:
+# http://docs.travis-ci.com/user/notifications/
+# Here's a simple example for email notifications:
+#
+# notifications:
+#   email:
+#     recipients:
+#       - one@example.com
+#       - other@example.com
+#     on_success: [always|never|change] # default: change
+#     on_failure: [always|never|change] # default: always
+#
+# There are also other types of notifications available, including:
+# IRC, Campfire, Flowdock, HipChat, and Webhook.
+# For more infomation about notifications, please visit the link above.
