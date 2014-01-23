@@ -1,52 +1,15 @@
-language: 
-  - objective-c
-  - cpp
+language: objective-c
 os:
-  - linux
   - osx
 compiler:
-  - gcc
   - clang
 before_install:
-#  - sudo ./.travis/before_install.sh
-  osx:
-    - travis_retry brew update
-    - travis_retry brew install boost
-    - travis_retry brew install libcryptopp
-  linux:
-    - travis_retry sudo apt-get update -qq
-    - travis_retry sudo apt-get install -qq autotools-dev
-    - travis_retry sudo apt-get install -qq libboost-all-dev
-    - travis_retry sudo apt-get install -qq libcrypto++-dev
-    - travis_retry sudo apt-get install -qq libsqlite3-dev
+  - travis_retry brew update
+  - travis_retry brew install boost
+  - travis_retry brew install libcryptopp
 script:
-  osx:
-    - sudo ./.travis/script.sh
-    - autoreconf -f --install
-    - ./configure --without-c++11 --with-system-boost --with-tests
-    - make
-    - sudo make install
-    - ./tests_boost/unit-tests -l all
-  linux:
-    - sudo ./.travis/script.sh
-    - autoreconf -f --install
-    - ./configure --without-c++11 --with-system-boost --with-tests
-    - make
-    - sudo make install
-    - sudo ldconfig
-    - ./tests_boost/unit-tests -l all
-
-matrix:
-  exclude:
-    - language: objective-c
-      os: linux
-      compiler: clang
-    - language: objective-c
-      os: osx
-      compiler: gcc
-    - language: cpp
-      os: linux
-      compiler: clang
-    - language: cpp
-      os: osx
-      compiler: gcc
+  - autoreconf -f --install
+  - ./configure --without-c++11 --with-system-boost --with-tests
+  - make
+  - sudo make install
+  - ./tests_boost/unit-tests -l all
