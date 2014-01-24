@@ -1,4 +1,4 @@
-# For Ubuntu only
+# For Ubuntu Only
 language: cpp
 compiler:
   - gcc
