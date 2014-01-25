@@ -8,7 +8,8 @@
 ndn_cpp_c_headers = \
   $(wildcard ndn-cpp/*.h) \
   $(wildcard ndn-cpp/c/*.*) \
-  $(wildcard ndn-cpp/c/encoding/*.*)
+  $(wildcard ndn-cpp/c/encoding/*.*) \
+  $(wildcard ndn-cpp/c/util/*.*)
 
 # Public C++ headers.
 # Use ndn-cpp/*.hpp instead of *.* to not overwrite *.h from above.
@@ -16,11 +17,6 @@ ndn_cpp_cpp_headers = \
   $(wildcard ndn-cpp/*.hpp) \
   $(wildcard ndn-cpp/encoding/*.*) \
   $(wildcard ndn-cpp/security/*.*) \
-  $(wildcard ndn-cpp/security/certificate/*.*) \
-  $(wildcard ndn-cpp/security/encryption/*.*) \
-  $(wildcard ndn-cpp/security/identity/*.*) \
-  $(wildcard ndn-cpp/security/policy/*.*) \
-  $(wildcard ndn-cpp/security/signature/*.*) \
   $(wildcard ndn-cpp/transport/*.*) \
   $(wildcard ndn-cpp/util/*.*)
 
@@ -194,4 +190,8 @@ ndnboost_headers = \
   $(wildcard ndnboost/lambda/*.*) \
   $(wildcard ndnboost/lambda/detail/*.*)
 
-nobase_include_HEADERS = $(ndn_cpp_c_headers) $(ndn_cpp_cpp_headers) $(ndnboost_headers)
+nobase_include_HEADERS = $(ndn_cpp_c_headers) $(ndn_cpp_cpp_headers)
+
+if ! USE_SYSTEM_BOOST
+  nobase_include_HEADERS += $(ndnboost_headers)
+endif

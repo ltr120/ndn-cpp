@@ -9,7 +9,8 @@
 #define NDN_FACE_HPP
 
 #include "node.hpp"
-#include "transport/tcp-transport.hpp"
+#include "transport/transport.hpp"
+#include "transport/unix-transport.hpp"
 
 namespace ndn {
 
@@ -19,12 +20,22 @@ namespace ndn {
 class Face {
 public:
   /**
+   * Create a new Face for communication with an NDN hub at host:port using the default TcpTransport.
+   * @param host The host of the NDN hub.
+   * @param port The port of the NDN hub. If omitted. use 6363.
+   */
+  Face()
+  : node_(ptr_lib::shared_ptr<UnixTransport>(new UnixTransport()))
+  {
+  }
+
+  /**
    * Create a new Face for communication with an NDN hub with the given Transport object and connectionInfo.
    * @param transport A shared_ptr to a Transport object used for communication.
    * @param transport A shared_ptr to a Transport::ConnectionInfo to be used to connect to the transport.
    */
-  Face(const ptr_lib::shared_ptr<Transport>& transport, const ptr_lib::shared_ptr<const Transport::ConnectionInfo>& connectionInfo)
-  : node_(transport, connectionInfo)
+  Face(const ptr_lib::shared_ptr<Transport>& transport)
+  : node_(transport)
   {
   }
   
@@ -33,11 +44,10 @@ public:
    * @param host The host of the NDN hub.
    * @param port The port of the NDN hub. If omitted. use 6363.
    */
-  Face(const char *host, unsigned short port = 6363)
-  : node_(ptr_lib::shared_ptr<TcpTransport>(new TcpTransport()), 
-          ptr_lib::make_shared<TcpTransport::ConnectionInfo>(host, port))
-  {
-  }
+  // Face(const char *host, unsigned short port = 6363)
+  // : node_(ptr_lib::shared_ptr<TcpTransport>(new TcpTransport(host, port)))
+  // {
+  // }
     
   /**
    * Send the Interest through the transport, read the entire response and call onData(interest, data).
@@ -51,10 +61,9 @@ public:
    */
   uint64_t 
   expressInterest
-    (const Interest& interest, const OnData& onData, const OnTimeout& onTimeout = OnTimeout(),
-     WireFormat& wireFormat = *WireFormat::getDefaultWireFormat())
+    (const Interest& interest, const OnData& onData, const OnTimeout& onTimeout = OnTimeout())
   {
-    return node_.expressInterest(interest, onData, onTimeout, wireFormat);
+    return node_.expressInterest(interest, onData, onTimeout);
   }
 
   /**
@@ -71,8 +80,7 @@ public:
    */
   uint64_t 
   expressInterest
-    (const Name& name, const Interest *interestTemplate, const OnData& onData, const OnTimeout& onTimeout = OnTimeout(),
-     WireFormat& wireFormat = *WireFormat::getDefaultWireFormat());
+    (const Name& name, const Interest *interestTemplate, const OnData& onData, const OnTimeout& onTimeout = OnTimeout());
 
   /**
    * Encode name as an Interest, using a default interest lifetime.
@@ -87,10 +95,9 @@ public:
    */
   uint64_t 
   expressInterest
-    (const Name& name, const OnData& onData, const OnTimeout& onTimeout = OnTimeout(),
-     WireFormat& wireFormat = *WireFormat::getDefaultWireFormat()) 
+    (const Name& name, const OnData& onData, const OnTimeout& onTimeout = OnTimeout()) 
   {
-    return expressInterest(name, 0, onData, onTimeout, wireFormat);
+    return expressInterest(name, 0, onData, onTimeout);
   }
 
   /**
@@ -118,11 +125,10 @@ public:
    * @return The registered prefix ID which can be used with removeRegisteredPrefix.
    */
   uint64_t 
-  registerPrefix
-    (const Name& prefix, const OnInterest& onInterest, const OnRegisterFailed& onRegisterFailed, const ForwardingFlags& flags = ForwardingFlags(), 
-     WireFormat& wireFormat = *WireFormat::getDefaultWireFormat())
+  setInterestFilter
+    (const Name& prefix, const OnInterest& onInterest, const OnRegisterFailed& onRegisterFailed, const ForwardingFlags& flags = ForwardingFlags())
   {
-    return node_.registerPrefix(prefix, onInterest, onRegisterFailed, flags, wireFormat);
+    return node_.registerPrefix(prefix, onInterest, onRegisterFailed, flags);
   }
 
   /**
@@ -132,23 +138,44 @@ public:
    * @param registeredPrefixId The ID returned from registerPrefix.
    */
   void
-  removeRegisteredPrefix(uint64_t registeredPrefixId)
+  unsetInterestFilter(uint64_t registeredPrefixId)
   {
     node_.removeRegisteredPrefix(registeredPrefixId);
+  }
+
+  /**
+   * @brief Publish data packet
+   *
+   * This method can be called to satisfy the incoming Interest or to put Data packet into the cache
+   * of the local NDN forwarder
+   */
+  void
+  put(const Data &data)
+  {
+    node_.put(data);
   }
   
   /**
    * Process any data to receive or call timeout callbacks.
-   * This is non-blocking and will return immediately if there is no data to receive.
-   * You should repeatedly call this from an event loop, with calls to sleep as needed so that the loop doesn't use 100% of the CPU.
+   *
+   * This call will block forever (default timeout == 0) to process IO on the face.
+   * To exit, one expected to call face.shutdown() from one of the callback methods.
+   *
+   * If positive timeout is specified, then processEvents will exit after this timeout,
+   * if not stopped earlier with face.shutdown() or when all active events finish.
+   * The call can be called repeatedly, if desired.
+   *
+   * If negative timeout is specified, then processEvents will not block and process only pending
+   * events.
+   *
    * @throw This may throw an exception for reading data or in the callback for processing the data.  If you
    * call this from an main event loop, you may want to catch and log/disregard all exceptions.
    */
   void 
-  processEvents()
+  processEvents(Milliseconds timeout = 0, bool keepThread = false)
   {
     // Just call Node's processEvents.
-    node_.processEvents();
+    node_.processEvents(timeout, keepThread);
   }
 
   /**

@@ -9,31 +9,29 @@
 #ifndef NDN_KEY_CHAIN_HPP
 #define NDN_KEY_CHAIN_HPP
 
-#include "../data.hpp"
-#include "../face.hpp"
-#include "identity/identity-manager.hpp"
-#include "encryption/encryption-manager.hpp"
-#include "policy/validation-request.hpp"
+#include "identity-certificate.hpp"
+#include "public-key.hpp"
+#include "signature-sha256-with-rsa.hpp"
+
+#include "sec-public-info-sqlite3.hpp"
+#include "sec-public-info-memory.hpp"
+#include "sec-tpm-osx.hpp"
+#include "sec-tpm-memory.hpp"
+
 
 namespace ndn {
 
-class PolicyManager;
-  
 /**
- * KeyChain is the main class of the security library.
+ * KeyChain is one of the main classes of the security library.
  *
- * The KeyChain class provides a set of interfaces to the security library such as identity management, policy configuration 
- * and packet signing and verification.
+ * The KeyChain class provides a set of interfaces of identity management and private key related operations.
  */
-class KeyChain {
+template<class Info, class Tpm>
+class KeyChainImpl : public Info, public Tpm
+{
 public:
-  KeyChain
-    (const ptr_lib::shared_ptr<IdentityManager>& identityManager, const ptr_lib::shared_ptr<PolicyManager>& policyManager);
-
-  /*****************************************
-   *          Identity Management          *
-   *****************************************/
-
+  // struct Error : public std::runtime_error { Error(const std::string &what) : std::runtime_error(what) {} };
+  
   /**
    * Create an identity by creating a pair of Key-Signing-Key (KSK) for this identity and a self-signed certificate of the KSK.
    * @param identityName The name of the identity.
@@ -42,19 +40,21 @@ public:
   Name
   createIdentity(const Name& identityName)
   {
-    return identityManager_->createIdentity(identityName);
-  }
-
-  /**
-   * Get the default identity.
-   * @return The default identity name.
-   */
-  Name
-  getDefaultIdentity()
-  {
-    return identityManager_->getDefaultIdentity();
-  }
+    if (!Info::doesIdentityExist(identityName)) {
+      Info::addIdentity(identityName);
   
+      Name keyName = generateRSAKeyPairAsDefault(identityName, true);
+
+      ptr_lib::shared_ptr<IdentityCertificate> selfCert = selfSign(keyName); 
+  
+      Info::addCertificateAsDefault(*selfCert);
+
+      return keyName;
+    }
+    else
+      return Name();
+  }
+    
   /**
    * Generate a pair of RSA keys for the specified identity.
    * @param identityName The name of the identity.
@@ -65,20 +65,9 @@ public:
   Name
   generateRSAKeyPair(const Name& identityName, bool isKsk = false, int keySize = 2048)
   {
-    return identityManager_->generateRSAKeyPair(identityName, isKsk, keySize);
+    return generateKeyPair(identityName, isKsk, KEY_TYPE_RSA, keySize);
   }
-
-  /**
-   * Set a key as the default key of an identity.
-   * @param keyName The name of the key.
-   * @param identityName the name of the identity. If not specified, the identity name is inferred from the keyName.
-   */
-  void
-  setDefaultKeyForIdentity(const Name& keyName, const Name& identityName = Name())
-  {
-    return identityManager_->setDefaultKeyForIdentity(keyName, identityName);
-  }
-
+  
   /**
    * Generate a pair of RSA keys for the specified identity and set it as default key for the identity.
    * @param identityName The name of the identity.
@@ -89,128 +78,125 @@ public:
   Name
   generateRSAKeyPairAsDefault(const Name& identityName, bool isKsk = false, int keySize = 2048)
   {
-    return identityManager_->generateRSAKeyPairAsDefault(identityName, isKsk, keySize);
+    Name keyName = generateKeyPair(identityName, isKsk, KEY_TYPE_RSA, keySize);
+
+    Info::setDefaultKeyNameForIdentity(keyName);
+  
+    return keyName;
   }
 
   /**
-   * Create a public key signing request.
-   * @param keyName The name of the key.
-   * @returns The signing request data.
-   */
-  Blob
-  createSigningRequest(const Name& keyName)
-  {
-    return identityManager_->getPublicKey(keyName)->getKeyDer();
-  }
-
-  /**
-   * Install an identity certificate into the public key identity storage.
-   * @param certificate The certificate to to added.
-   */
-  void
-  installIdentityCertificate(const IdentityCertificate& certificate)
-  {
-    identityManager_->addCertificate(certificate);
-  }
-
-  /**
-   * Set the certificate as the default for its corresponding key.
-   * @param certificateName The certificate.
-   */
-  void
-  setDefaultCertificateForKey(const IdentityCertificate& certificate)
-  {
-    identityManager_->setDefaultCertificateForKey(certificate);
-  }
-
-  /**
-   * Get a certificate with the specified name.
-   * @param certificateName The name of the requested certificate.
-   * @return the requested certificate which is valid.
-   */
-  ptr_lib::shared_ptr<Certificate>
-  getCertificate(const Name& certificateName)
-  {
-    return identityManager_->getCertificate(certificateName);
-  }
-
-  /**
-   * Get a certificate even if the certificate is not valid anymore.
-   * @param certificateName The name of the requested certificate.
-   * @return the requested certificate.
-   */
-  ptr_lib::shared_ptr<Certificate>
-  getAnyCertificate(const Name& certificateName)
-  {
-    return identityManager_->getAnyCertificate(certificateName);
-  }
-
-  /**
-   * Get an identity certificate with the specified name.
-   * @param certificateName The name of the requested certificate.
-   * @return the requested certificate which is valid.
+   * Create an identity certificate for a public key managed by this IdentityManager.
+   * @param certificatePrefix The name of public key to be signed.
+   * @param signerCertificateName The name of signing certificate.
+   * @param notBefore The notBefore value in the validity field of the generated certificate.
+   * @param notAfter The notAfter vallue in validity field of the generated certificate.
+   * @return The name of generated identity certificate.
    */
   ptr_lib::shared_ptr<IdentityCertificate>
-  getIdentityCertificate(const Name& certificateName)
+  createIdentityCertificate
+    (const Name& certificatePrefix,
+     const Name& signerCertificateName,
+     const MillisecondsSince1970& notBefore, 
+     const MillisecondsSince1970& notAfter)
   {
-    return identityManager_->getCertificate(certificateName);
+    Name keyName = getKeyNameFromCertificatePrefix(certificatePrefix);
+    
+    ptr_lib::shared_ptr<PublicKey> pubKey = Info::getPublicKey(keyName);
+    if (!pubKey)
+      throw std::runtime_error("Requested public key [" + keyName.toUri() + "] doesn't exist");
+    
+    ptr_lib::shared_ptr<IdentityCertificate> certificate =
+      createIdentityCertificate(certificatePrefix,
+                                *pubKey,
+                                signerCertificateName,
+                                notBefore, notAfter);
+
+    Info::addCertificate(*certificate);
+  
+    return certificate;
   }
 
+
   /**
-   * Get an identity certificate even if the certificate is not valid anymore.
-   * @param certificateName The name of the requested certificate.
-   * @return the requested certificate.
+   * Create an identity certificate for a public key supplied by the caller.
+   * @param certificatePrefix The name of public key to be signed.
+   * @param publickey The public key to be signed.
+   * @param signerCertificateName The name of signing certificate.
+   * @param notBefore The notBefore value in the validity field of the generated certificate.
+   * @param notAfter The notAfter vallue in validity field of the generated certificate.
+   * @return The generated identity certificate.
    */
   ptr_lib::shared_ptr<IdentityCertificate>
-  getAnyIdentityCertificate(const Name& certificateName)
+  createIdentityCertificate
+    (const Name& certificatePrefix,
+     const PublicKey& publicKey,
+     const Name& signerCertificateName, 
+     const MillisecondsSince1970& notBefore,
+     const MillisecondsSince1970& notAfter)
   {
-    return identityManager_->getAnyCertificate(certificateName);
-  }
-
-  /**
-   * Revoke a key
-   * @param keyName the name of the key that will be revoked
-   */
-  void 
-  revokeKey(const Name & keyName)
-  {
-    //TODO: Implement
-  }
-
-  /**
-   * Revoke a certificate
-   * @param certificateName the name of the certificate that will be revoked
-   */
-  void 
-  revokeCertificate(const Name & certificateName)
-  {
-    //TODO: Implement
-  }
-
-  ptr_lib::shared_ptr<IdentityManager>
-  getIdentityManager() { return identityManager_; }
+    ptr_lib::shared_ptr<IdentityCertificate> certificate (new IdentityCertificate());
+    Name keyName = getKeyNameFromCertificatePrefix(certificatePrefix);
   
-  /*****************************************
-   *           Policy Management           *
-   *****************************************/
-
-  const ptr_lib::shared_ptr<PolicyManager>&
-  getPolicyManager() { return policyManager_; }
+    Name certificateName = certificatePrefix;
+    certificateName.append("ID-CERT").appendVersion();
   
-  /*****************************************
-   *              Sign/Verify              *
-   *****************************************/
+    certificate->setName(certificateName);
+    certificate->setNotBefore(notBefore);
+    certificate->setNotAfter(notAfter);
+    certificate->setPublicKeyInfo(publicKey);
+    certificate->addSubjectDescription(CertificateSubjectDescription("2.5.4.41", keyName.toUri()));
+    certificate->encode();
 
+    sign(*certificate, signerCertificateName);
+
+    return certificate;
+  }
+
+  void
+  sign(Data &data)
+  {
+    if (!Info::defaultCertificate())
+      {
+        Info::refreshDefaultCertificate();
+
+        if(!Info::defaultCertificate())
+          throw std::runtime_error("Default IdentityCertificate cannot be determined");
+      }
+
+    sign(data, *Info::defaultCertificate());
+  }
+  
   /**
    * Wire encode the Data object, sign it and set its signature.
-   * Note: the caller must make sure the timestamp is correct, for example with 
-   * data.getMetaInfo().setTimestampMilliseconds(time(NULL) * 1000.0).
    * @param data The Data object to be signed.  This updates its signature and key locator field and wireEncoding.
    * @param certificateName The certificate name of the key to use for signing.  If omitted, infer the signing identity from the data packet name.
-   * @param wireFormat A WireFormat object used to encode the input. If omitted, use WireFormat getDefaultWireFormat().
    */
   void 
-  sign(Data& data, const Name& certificateName, WireFormat& wireFormat = *WireFormat::getDefaultWireFormat());
+  sign(Data& data, const Name& certificateName)
+  {
+    ptr_lib::shared_ptr<IdentityCertificate> cert = Info::getCertificate(certificateName);
+    if (!cert)
+      throw std::runtime_error("Requested certificate [" + certificateName.toUri() + "] doesn't exist");
+
+    SignatureSha256WithRsa signature;
+    signature.setKeyLocator(certificateName.getPrefix(-1)); // implicit conversion should take care
+    data.setSignature(signature);
+
+    // For temporary usage, we support RSA + SHA256 only, but will support more.
+    Tpm::signInTpm(data, cert->getPublicKeyName(), DIGEST_ALGORITHM_SHA256);
+  }
+
+  void
+  sign(Data& data, const IdentityCertificate& certificate)
+  {
+    SignatureSha256WithRsa signature;
+    signature.setKeyLocator(certificate.getName().getPrefix(-1));
+    data.setSignature(signature);
+
+    // For temporary usage, we support RSA + SHA256 only, but will support more.
+    Tpm::signInTpm(data, certificate.getPublicKeyName(), DIGEST_ALGORITHM_SHA256);
+  }
   
   /**
    * Sign the byte array using a certificate name and return a Signature object.
@@ -219,31 +205,36 @@ public:
    * @param certificateName The certificate name used to get the signing key and which will be put into KeyLocator.
    * @return The Signature.
    */
-  ptr_lib::shared_ptr<Signature> 
-  sign(const uint8_t* buffer, size_t bufferLength, const Name& certificateName);
-
-  /**
-   * Sign the byte array using a certificate name and return a Signature object.
-   * @param buffer The byte array to be signed.
-   * @param certificateName The certificate name used to get the signing key and which will be put into KeyLocator.
-   * @return The Signature.
-   */
-  ptr_lib::shared_ptr<Signature> 
-  sign(const std::vector<uint8_t>& buffer, const Name& certificateName)
+  Signature
+  sign(const uint8_t* buffer, size_t bufferLength, const Name& certificateName)
   {
-    return sign(&buffer[0], buffer.size(), certificateName);
+    ptr_lib::shared_ptr<IdentityCertificate> cert = Info::getCertificate(certificateName);
+    if (!cert)
+      throw std::runtime_error("Requested certificate [" + certificateName.toUri() + "] doesn't exist");
+
+    SignatureSha256WithRsa signature;
+    signature.setKeyLocator(certificateName.getPrefix(-1)); // implicit conversion should take care
+  
+    // For temporary usage, we support RSA + SHA256 only, but will support more.
+    signature.setValue(Tpm::signInTpm(buffer, bufferLength, cert->getPublicKeyName(), DIGEST_ALGORITHM_SHA256));
+    return signature;
   }
 
   /**
    * Wire encode the Data object, sign it and set its signature.
-   * Note: the caller must make sure the timestamp is correct, for example with 
-   * data.getMetaInfo().setTimestampMilliseconds(time(NULL) * 1000.0).
    * @param data The Data object to be signed.  This updates its signature and key locator field and wireEncoding.
    * @param identityName The identity name for the key to use for signing.  If omitted, infer the signing identity from the data packet name.
-   * @param wireFormat A WireFormat object used to encode the input. If omitted, use WireFormat getDefaultWireFormat().
    */
   void 
-  signByIdentity(Data& data, const Name& identityName = Name(), WireFormat& wireFormat = *WireFormat::getDefaultWireFormat());
+  signByIdentity(Data& data, const Name& identityName = Name())
+  {
+    Name signingCertificateName = Info::getDefaultCertificateNameForIdentity(identityName);
+
+    if (signingCertificateName.getComponentCount() == 0)
+      throw std::runtime_error("No qualified certificate name found!");
+
+    sign(data, signingCertificateName);
+  }
 
   /**
    * Sign the byte array using an identity name and return a Signature object.
@@ -252,104 +243,124 @@ public:
    * @param identityName The identity name.
    * @return The Signature.
    */
-  ptr_lib::shared_ptr<Signature> 
-  signByIdentity(const uint8_t* buffer, size_t bufferLength, const Name& identityName);
-
-  /**
-   * Sign the byte array using an identity name and return a Signature object.
-   * @param buffer The byte array to be signed.
-   * @param identityName The identity name.
-   * @return The Signature.
-   */
-  ptr_lib::shared_ptr<Signature> 
-  signByIdentity(const std::vector<uint8_t>& buffer, const Name& identityName)
+  Signature
+  signByIdentity(const uint8_t* buffer, size_t bufferLength, const Name& identityName = Name())
   {
-    return signByIdentity(&buffer[0], buffer.size(), identityName);
+    Name signingCertificateName = Info::getDefaultCertificateNameForIdentity(identityName);
+    
+    if (signingCertificateName.size() == 0)
+      throw std::runtime_error("No qualified certificate name found!");
+
+    return sign(buffer, bufferLength, signingCertificateName);
   }
 
   /**
-   * Check the signature on the Data object and call either onVerify or onVerifyFailed. 
-   * We use callback functions because verify may fetch information to check the signature.
-   * @param data The Data object with the signature to check. It is an error if data does not have a wireEncoding. 
-   * To set the wireEncoding, you can call data.wireDecode.
-   * @param onVerified If the signature is verified, this calls onVerified(data).
-   * @param onVerifyFailed If the signature check fails, this calls onVerifyFailed(data).
+   * Generate a self-signed certificate for a public key.
+   * @param keyName The name of the public key.
+   * @return The generated certificate.
    */
-  void
-  verifyData
-    (const ptr_lib::shared_ptr<Data>& data, const OnVerified& onVerified, const OnVerifyFailed& onVerifyFailed, int stepCount = 0);
-
-  /*****************************************
-   *           Encrypt/Decrypt             *
-   *****************************************/
-
-  /**
-   * Generate a symmetric key.
-   * @param keyName The name of the generated key.
-   * @param keyType The type of the key, e.g. KEY_TYPE_AES
-   */
-  void 
-  generateSymmetricKey(const Name& keyName, KeyType keyType)
+  ptr_lib::shared_ptr<IdentityCertificate>
+  selfSign(const Name& keyName)
   {
-    encryptionManager_->createSymmetricKey(keyName, keyType);
-  }
+    if(keyName.empty())
+      throw std::runtime_error("Incorrect key name: " + keyName.toUri());
 
-  /**
-   * Encrypt a byte array.
-   * @param keyName The name of the encrypting key.
-   * @param data The byte array that will be encrypted.
-   * @param dataLength The length of data.
-   * @param useSymmetric If true then symmetric encryption is used, otherwise asymmetric encryption is used.
-   * @param encryptMode the encryption mode
-   * @return the encrypted data as an immutable Blob.
-   */
-  Blob
-  encrypt(const Name &keyName, const uint8_t* data, size_t dataLength, bool useSymmetric = true, 
-          EncryptMode encryptMode = ENCRYPT_MODE_DEFAULT)
-  {
-    return encryptionManager_->encrypt(keyName, data, dataLength, useSymmetric, encryptMode);
-  }
-
-  /**
-   * Decrypt a byte array.
-   * @param keyName The name of the decrypting key.
-   * @param data The byte array that will be decrypted.
-   * @param dataLength The length of data.
-   * @param useSymmetric If true then symmetric encryption is used, otherwise asymmetric encryption is used.
-   * @param encryptMode the encryption mode
-   * @return the decrypted data as an immutable Blob.
-   */
-  Blob
-  decrypt(const Name &keyName, const uint8_t* data, size_t dataLength, bool useSymmetric = true, 
-          EncryptMode encryptMode = ENCRYPT_MODE_DEFAULT)
-  {
-     return encryptionManager_->decrypt(keyName, data, dataLength, useSymmetric, encryptMode);
-  }
+    ptr_lib::shared_ptr<IdentityCertificate> certificate = ptr_lib::make_shared<IdentityCertificate>();
+    
+    Name certificateName = keyName.getPrefix(-1);
+    certificateName.append("KEY").append(keyName.get(-1)).append("ID-CERT").appendVersion();
+    
+    ptr_lib::shared_ptr<PublicKey> pubKey = Info::getPublicKey(keyName);
+    if (!pubKey)
+      throw std::runtime_error("Requested public key [" + keyName.toUri() + "] doesn't exist");
   
+    certificate->setName(certificateName);
+    certificate->setNotBefore(getNow());
+    certificate->setNotAfter(getNow() + 630720000 /* 20 years*/);
+    certificate->setPublicKeyInfo(*pubKey);
+    certificate->addSubjectDescription(CertificateSubjectDescription("2.5.4.41", keyName.toUri()));
+    certificate->encode();
+
+    selfSign(*certificate);
+    return certificate;
+  }
+
   /**
-   * Set the Face which will be used to fetch required certificates.
-   * @param face A pointer to the Face object.
+   * @brief Self-sign the supplied identity certificate
    */
   void
-  setFace(Face* face) { face_ = face; }
+  selfSign (IdentityCertificate& cert)
+  {
+    SignatureSha256WithRsa signature;
+    signature.setKeyLocator(cert.getName().getPrefix(-1)); // implicit conversion should take care
+    cert.setSignature(signature);
+
+    // For temporary usage, we support RSA + SHA256 only, but will support more.
+    Tpm::signInTpm(cert, cert.getPublicKeyName(), DIGEST_ALGORITHM_SHA256);
+  }
+
 
 private:
-  void
-  onCertificateData
-    (const ptr_lib::shared_ptr<const Interest> &interest, const ptr_lib::shared_ptr<Data> &data, ptr_lib::shared_ptr<ValidationRequest> nextStep);
-  
-  void
-  onCertificateInterestTimeout
-    (const ptr_lib::shared_ptr<const Interest> &interest, int retry, const OnVerifyFailed& onVerifyFailed, 
-     const ptr_lib::shared_ptr<Data> &data, ptr_lib::shared_ptr<ValidationRequest> nextStep);
+  /**
+   * Generate a key pair for the specified identity.
+   * @param identityName The name of the specified identity.
+   * @param isKsk true for generating a Key-Signing-Key (KSK), false for a Data-Signing-Key (KSK).
+   * @param keyType The type of the key pair, e.g. KEY_TYPE_RSA.
+   * @param keySize The size of the key pair.
+   * @return The name of the generated key.
+   */
+  Name
+  generateKeyPair(const Name& identityName, bool isKsk = false, KeyType keyType = KEY_TYPE_RSA, int keySize = 2048)
+  {
+    Name keyName = Info::getNewKeyName(identityName, isKsk);
 
-  ptr_lib::shared_ptr<IdentityManager> identityManager_;
-  ptr_lib::shared_ptr<PolicyManager> policyManager_;
-  ptr_lib::shared_ptr<EncryptionManager> encryptionManager_;
-  Face* face_;
-  const int maxSteps_;
+    Tpm::generateKeyPairInTpm(keyName.toUri(), keyType, keySize);
+
+    ptr_lib::shared_ptr<PublicKey> pubKey = Tpm::getPublicKeyFromTpm(keyName.toUri());
+    Info::addPublicKey(keyName, keyType, *pubKey);
+
+    return keyName;
+  }
+
+  static Name
+  getKeyNameFromCertificatePrefix(const Name& certificatePrefix)
+  {
+    Name result;
+
+    std::string keyString("KEY");
+    int i = 0;
+    for(; i < certificatePrefix.size(); i++) {
+      if (certificatePrefix.get(i).toEscapedString() == keyString)
+        break;
+    }
+    
+    if (i >= certificatePrefix.size())
+      throw std::runtime_error("Identity Certificate Prefix does not have a KEY component");
+
+    result.append(certificatePrefix.getSubName(0, i));
+    result.append(certificatePrefix.getSubName(i + 1, certificatePrefix.size()-i-1));
+    
+    return result;
+  }
+
 };
 
 }
+
+#ifdef NDN_CPP_HAVE_OSX_SECURITY
+
+namespace ndn
+{
+typedef KeyChainImpl<SecPublicInfoSqlite3, SecTpmOsx> KeyChain;
+};
+
+#else
+
+namespace ndn
+{
+typedef KeyChainImpl<SecPublicInfoMemory, SecTpmMemory> KeyChain;
+};
+
+#endif //NDN_CPP_HAVE_OSX_SECURITY
 
 #endif

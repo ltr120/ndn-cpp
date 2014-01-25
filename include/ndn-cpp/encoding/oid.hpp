@@ -12,6 +12,8 @@
 #include <vector>
 #include <string>
 
+namespace CryptoPP { class BufferedTransformation; }
+
 namespace ndn {
 
 class OID {
@@ -20,6 +22,8 @@ public:
   {
   }
     
+  OID(const char *oid);
+
   OID(const std::string& oid);
 
   OID(const std::vector<int>& oid)
@@ -50,10 +54,22 @@ public:
   {
     return !equal(oid);
   }
-  
-private:
-  bool equal(const OID& oid) const;
 
+  void
+  encode(CryptoPP::BufferedTransformation &out) const;
+
+  void
+  decode(CryptoPP::BufferedTransformation &in);
+
+
+private:
+  void
+  construct(const std::string &value);
+  
+  bool
+  equal(const OID& oid) const;
+
+private:
   std::vector<int> oid_;
 };
 

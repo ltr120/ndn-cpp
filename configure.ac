@@ -52,54 +52,51 @@ AC_CHECK_FUNCS([sscanf], :, AC_MSG_ERROR([*** sscanf not found. Check 'config.lo
 AC_CHECK_HEADERS([time.h], :, AC_MSG_ERROR([*** time.h not found. Check 'config.log' for more details.]))
 AC_CHECK_HEADERS([sys/time.h], :, AC_MSG_ERROR([*** sys/time.h not found. Check 'config.log' for more details.]))
 AC_CHECK_FUNCS([gettimeofday], :, AC_MSG_ERROR([*** gettimeofday not found. processEvents requires it. Check 'config.log' for more details.]))
-AX_CXX_COMPILE_STDCXX_11(, optional)
 AC_C_INLINE
 
-AC_MSG_CHECKING([for std::shared_ptr])
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
-    [[#include <memory>]]
-    [[std::shared_ptr<int> have_shared_ptr;]])
-], [
-    AC_MSG_RESULT([yes])
-    AC_DEFINE_UNQUOTED([HAVE_STD_SHARED_PTR], 1, [1 if have the `std::shared_ptr' class.])
-], [
-    AC_MSG_RESULT([no])
-    AC_DEFINE_UNQUOTED([HAVE_STD_SHARED_PTR], 0, [1 if have the `std::shared_ptr' class.])
-])
-AC_MSG_CHECKING([for boost::shared_ptr])
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
-    [[#include <boost/shared_ptr.hpp>]]
-    [[boost::shared_ptr<int> have_shared_ptr;]])
-], [
-    AC_MSG_RESULT([yes])
-    AC_DEFINE_UNQUOTED([HAVE_BOOST_SHARED_PTR], 1, [1 if have the `boost::shared_ptr' class.])
-], [
-    AC_MSG_RESULT([no])
-    AC_DEFINE_UNQUOTED([HAVE_BOOST_SHARED_PTR], 0, [1 if have the `boost::shared_ptr' class.])
-])
+# Unless --without-c++11 specified, try to enable C++11
+AX_CXX_COMPILE_STDCXX_11(, optional)
 
-AC_MSG_CHECKING([for std::function])
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
-    [[#include <functional>]]
-    [[std::function<int> have_function();]])
-], [
-    AC_MSG_RESULT([yes])
-    AC_DEFINE_UNQUOTED([HAVE_STD_FUNCTION], 1, [1 if have the `std::function' class.])
-], [
-    AC_MSG_RESULT([no])
-    AC_DEFINE_UNQUOTED([HAVE_STD_FUNCTION], 0, [1 if have the `std::function' class.])
-])
-AC_MSG_CHECKING([for boost::function])
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
-    [[#include <boost/function.hpp>]]
-    [[boost::function<int> have_function();]])
-], [
-    AC_MSG_RESULT([yes])
-    AC_DEFINE_UNQUOTED([HAVE_BOOST_FUNCTION], 1, [1 if have the `boost::function' class.])
-], [
-    AC_MSG_RESULT([no])
-    AC_DEFINE_UNQUOTED([HAVE_BOOST_FUNCTION], 0, [1 if have the `boost::function' class.])
-])
+AC_ARG_WITH([system-boost],
+  AS_HELP_STRING(
+      [--with-system-boost],
+      [use system-installed boost libraries. If not specified, use the bundled version when necessary.]
+  ),
+  [want_system_boost="yes"],
+  [want_system_boost="no"]
+)
+
+AX_BOOST_BASE([1.42.0],
+  [
+    if test "$want_system_boost" == "yes" ; then
+      AC_DEFINE(USE_SYSTEM_BOOST,[1],[use system-installed boost libraries])
+      AM_CONDITIONAL(USE_SYSTEM_BOOST, true)
+    else
+      AM_CONDITIONAL(USE_SYSTEM_BOOST, false)
+    fi
+  ],
+  [AM_CONDITIONAL(USE_SYSTEM_BOOST, false)]
+)
+AX_BOOST_ASIO
+
+AC_ARG_WITH([tests],
+  AS_HELP_STRING(
+      [--with-tests],
+      [Enable compilation of library tests (disabled by default).]
+  ),
+  [
+    want_tests="yes"
+    AM_CONDITIONAL(COMPILE_TESTS, true)
+  ],
+  [
+    want_tests="no"
+    AM_CONDITIONAL(COMPILE_TESTS, false)
+  ]
+)
+
+AX_BOOST_SYSTEM
+AX_BOOST_UNIT_TEST_FRAMEWORK
+AM_CONDITIONAL(HAVE_BOOST_UNIT_TEST_FRAMEWORK, [test "x$ax_cv_boost_unit_test_framework" = "xyes"])
 
 AC_MSG_CHECKING([for gmtime support])
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
@@ -118,14 +115,15 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
     AC_DEFINE_UNQUOTED([HAVE_GMTIME_SUPPORT], 0, [1 if have sys/time gmtime support including timegm.])
 ])
 
-# Require libcrypto.
-AC_CHECK_LIB([crypto], [EVP_EncryptInit], [],
-             [AC_MSG_FAILURE([can't find openssl crypto lib])])
+# Require openssl (libcrypto).
+AX_CHECK_OPENSSL([], [AC_MSG_FAILURE([can't find openssl crypto lib])])
+
+AX_LIB_CRYPTOPP([], [AC_MSG_FAILURE([can't find crypto++ library])])
 
 # Conditionally use libsqlite3.  AX_LIB_SQLITE3 defines HAVE_SQLITE3 in confdefs.h .
 AX_LIB_SQLITE3()
 if grep -q "#define HAVE_SQLITE3" confdefs.h ; then
-  AC_CHECK_LIB([sqlite3], [sqlite3_open], [],
+  AC_CHECK_LIB([sqlite3], [sqlite3_open], [ ], # space necessar to prevent updating LIBS
                [AC_MSG_FAILURE([have sqlite2 headers but no libsqlite3])])
 fi
 
@@ -138,15 +136,15 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
     [[void test() { SecKeychainRef x; }]])
 ], [
     AC_MSG_RESULT([yes])
-    HAVE_OSX_SECURITY=1
+    AC_DEFINE_UNQUOTED([HAVE_OSX_SECURITY], 1, [1 if have the OSX framework.])
+    AM_CONDITIONAL(HAVE_OSX_SECURITY, true)
+
+    OSX_SECURITY_LIBS="-framework Security"
+    AC_SUBST([OSX_SECURITY_LIBS])
 ], [
     AC_MSG_RESULT([no])
-    HAVE_OSX_SECURITY=0
+    AM_CONDITIONAL(HAVE_OSX_SECURITY, false)
 ])
-AC_DEFINE_UNQUOTED([HAVE_OSX_SECURITY], $HAVE_OSX_SECURITY, [1 if have the OSX framework.])
-if test "$HAVE_OSX_SECURITY" == "1" ; then
-  LIBS="$LIBS -framework Security"
-fi
 
 DX_HTML_FEATURE(ON)
 DX_CHM_FEATURE(OFF)
@@ -159,5 +157,9 @@ DX_PS_FEATURE(OFF)
 DX_INIT_DOXYGEN([$PACKAGE_NAME],[Doxyfile])
 
 AC_CONFIG_FILES([Makefile
-                 include/Makefile])
+                 include/Makefile
+                 examples/Makefile
+                 tools/Makefile
+                 tests/Makefile
+                 tests_boost/Makefile])
 AC_OUTPUT

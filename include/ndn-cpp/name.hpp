@@ -12,12 +12,9 @@
 
 #include <vector>
 #include <string>
-#include <string.h>
 #include <sstream>
-#include "util/blob.hpp"
-
-struct ndn_NameComponent;
-struct ndn_Name;
+#include <string.h>
+#include "encoding/block.hpp"
 
 namespace ndn {
     
@@ -29,7 +26,8 @@ public:
   /**
    * A Name::Component holds a read-only name component value.
    */
-  class Component {
+  class Component
+  {
   public:
     /**
      * Create a new Name::Component with a null value.
@@ -37,13 +35,24 @@ public:
     Component() 
     {    
     }
+
+    // copy constructor OK
+  
+    /**
+     * Create a new Name::Component, taking another pointer to the Blob value.
+     * @param value A blob with a pointer to an immutable array.  The pointer is copied.
+     */
+    Component(const ConstBufferPtr &buffer)
+    : value_ (buffer)
+    {
+    }
   
     /**
      * Create a new Name::Component, copying the given value.
      * @param value The value byte array.
      */
-    Component(const std::vector<uint8_t>& value) 
-    : value_(value)
+    Component(const Buffer& value) 
+      : value_ (new Buffer(value))
     {
     }
 
@@ -53,29 +62,23 @@ public:
      * @param valueLen Length of value.
      */
     Component(const uint8_t *value, size_t valueLen) 
-    : value_(value, valueLen)
+      : value_ (new Buffer(value, valueLen))
+    {
+    }
+
+    template<class InputIterator>
+    Component(InputIterator begin, InputIterator end)
+      : value_ (new Buffer(begin, end))
     {
     }
     
-    /**
-     * Create a new Name::Component, taking another pointer to the Blob value.
-     * @param value A blob with a pointer to an immutable array.  The pointer is copied.
-     */
-    Component(const Blob &value)
-    : value_(value)
+    Component(const char *string)
+      : value_ (new Buffer(string, ::strlen(string)))
     {
     }
-  
-    /**
-     * Set the componentStruct to point to this component, without copying any memory.
-     * WARNING: The resulting pointer in componentStruct is invalid after a further use of this object which could reallocate memory.
-     * @param componentStruct The C ndn_NameComponent struct to receive the pointer.
-     */
-    void 
-    get(struct ndn_NameComponent& componentStruct) const;
-  
-    const Blob& 
-    getValue() const { return value_; }
+
+    const Buffer& 
+    getValue() const { return *value_; }
 
     /**
      * Write this component value to result, escaping characters according to the NDN URI Scheme.
@@ -83,7 +86,7 @@ public:
      * @param result the string stream to write to.
      */
     void 
-    toEscapedString(std::ostringstream& result) const
+    toEscapedString(std::ostream& result) const
     {
       Name::toEscapedString(*value_, result);
     }
@@ -178,6 +181,12 @@ public:
     {
       return *value_ == *other.value_;
     }
+
+    bool
+    empty() const
+    {
+      return !value_ || value_->empty();
+    }
     
     /**
      * Check if this is the same component as other.
@@ -241,11 +250,10 @@ public:
      */
     bool
     operator > (const Component& other) const { return compare(other) > 0; }
-
   private:
-    Blob value_;
-  }; 
-  
+    ConstBufferPtr value_;
+  };
+
   /**
    * Create a new Name with no components.
    */
@@ -259,6 +267,16 @@ public:
   Name(const std::vector<Component>& components)
   : components_(components)
   {
+  }
+
+  Name(const Block &name)
+  {
+    for (Block::element_const_iterator i = name.getAll().begin();
+         i != name.getAll().end();
+         ++i)
+      {
+        append(Component(i->value_begin(), i->value_end()));
+      }
   }
   
   /**
@@ -279,20 +297,11 @@ public:
     set(uri.c_str());
   }
 
-  /**
-   * Set the nameStruct to point to the components in this name, without copying any memory.
-   * WARNING: The resulting pointers in nameStruct are invalid after a further use of this object which could reallocate memory.
-   * @param nameStruct A C ndn_Name struct where the components array is already allocated.
-   */
-  void 
-  get(struct ndn_Name& nameStruct) const;
-  
-  /**
-   * Clear this name, and set the components by copying from the name struct.
-   * @param nameStruct A C ndn_Name struct
-   */
-  void 
-  set(const struct ndn_Name& nameStruct);
+  const Block &
+  wireEncode() const;
+
+  void
+  wireDecode(const Block &wire);
   
   /**
    * Parse the uri according to the NDN URI Scheme and set the name with the components.
@@ -324,14 +333,14 @@ public:
    * @return This name so that you can chain calls to append.
    */
   Name& 
-  append(const std::vector<uint8_t>& value) 
+  append(const Buffer& value) 
   {
     components_.push_back(value);
     return *this;
   }
   
   Name& 
-  append(const Blob &value)
+  append(const ConstBufferPtr &value)
   {
     components_.push_back(value);
     return *this;
@@ -341,6 +350,27 @@ public:
   append(const Component &value)
   {
     components_.push_back(value);
+    return *this;
+  }
+
+  /**
+   * @brief Append name component that represented as a string
+   *
+   * Note that this method is necessary to ensure correctness and unambiguity of
+   * ``append("string")`` operations (both Component and Name can be implicitly
+   * converted from string, each having different outcomes
+   */
+  Name& 
+  append(const char *value)
+  {
+    components_.push_back(Component(value));
+    return *this;
+  }
+  
+  Name&
+  append(const Block &value)
+  {
+    components_.push_back(Component(value.begin(), value.end()));
     return *this;
   }
   
@@ -365,7 +395,7 @@ public:
    * @deprecated Use append.
    */
   Name& 
-  appendComponent(const std::vector<uint8_t>& value) 
+  appendComponent(const Buffer& value) 
   {
     return append(value);
   }
@@ -374,7 +404,7 @@ public:
    * @deprecated Use append.
    */
   Name& 
-  appendComponent(const Blob &value)
+  appendComponent(const ConstBufferPtr &value)
   {
     return append(value);
   }
@@ -392,7 +422,7 @@ public:
    * @deprecated Use append.
    */
   Name& 
-  addComponent(const std::vector<uint8_t>& value) 
+  addComponent(const Buffer& value) 
   {
     return append(value);
   }
@@ -401,7 +431,7 @@ public:
    * @deprecated Use append.
    */
   Name& 
-  addComponent(const Blob &value)
+  addComponent(const ConstBufferPtr &value)
   {
     return append(value);
   }
@@ -466,15 +496,6 @@ public:
   toUri() const;
   
   /**
-   * @deprecated Use toUri().
-   */
-  std::string 
-  to_uri() const 
-  {
-    return toUri();
-  }
-
-  /**
    * Append a component with the encoded segment number.
    * @param segment The segment number.
    * @return This name so that you can chain calls to append.
@@ -498,6 +519,15 @@ public:
     components_.push_back(Component::fromNumberWithMarker(version, 0xFD));
     return *this;
   }
+
+  /**
+   * @brief Append a component with the encoded version number.
+   * 
+   * This version of the method creates version number based on the current timestamp
+   * @return This name so that you can chain calls to append.
+   */  
+  Name& 
+  appendVersion();
   
   /**
    * Check if this name has the same component count and components as the given name.
@@ -513,7 +543,13 @@ public:
    * @return true if this matches the given name, otherwise false.  This always returns true if this name is empty.
    */
   bool 
-  match(const Name& name) const;
+  isPrefixOf(const Name& name) const;
+
+  bool
+  match(const Name& name) const
+  {
+    return isPrefixOf(name);
+  }
   
   /**
    * Make a Blob value by decoding the escapedString between beginOffset and endOffset according to the NDN URI Scheme.
@@ -524,7 +560,7 @@ public:
    * @param endOffset The offset in escapedString of the end of the portion to decode.
    * @return The Blob value. If the escapedString is not a valid escaped component, then the Blob is a null pointer.
    */
-  static Blob 
+  static Component 
   fromEscapedString(const char *escapedString, size_t beginOffset, size_t endOffset);
 
   /**
@@ -534,7 +570,7 @@ public:
    * @param escapedString The null-terminated escaped string.
    * @return The Blob value. If the escapedString is not a valid escaped component, then the Blob is a null pointer.
    */
-  static Blob 
+  static Component 
   fromEscapedString(const char *escapedString);
 
   /**
@@ -544,7 +580,7 @@ public:
    * @param escapedString The escaped string.
    * @return The Blob value. If the escapedString is not a valid escaped component, then the Blob is a null pointer.
    */
-  static Blob 
+  static Component 
   fromEscapedString(const std::string& escapedString) { return fromEscapedString(escapedString.c_str()); }
 
   /**
@@ -554,20 +590,43 @@ public:
    * @param result the string stream to write to.
    */
   static void 
-  toEscapedString(const std::vector<uint8_t>& value, std::ostringstream& result);
+  toEscapedString(const uint8_t *value, size_t valueSize, std::ostream& result);
 
+  inline static void 
+  toEscapedString(const std::vector<uint8_t>& value, std::ostream& result)
+  {
+    toEscapedString(&*value.begin(), value.size(), result);
+  }
+  
   /**
    * Convert the value by escaping characters according to the NDN URI Scheme.
    * This also adds "..." to a value with zero or more ".".
    * @param value the buffer with the value to escape
    * @return The escaped string.
    */
-  static std::string
-  toEscapedString(const std::vector<uint8_t>& value);
+  inline static std::string
+  toEscapedString(const uint8_t *value, size_t valueSize)
+  {
+    std::ostringstream result;
+    toEscapedString(value, valueSize, result);
+    return result.str();
+  }
 
+  static inline std::string
+  toEscapedString(const std::vector<uint8_t>& value)
+  {
+    return toEscapedString(&*value.begin(), value.size());
+  }
+  
   //
   // vector equivalent interface.
   //
+
+  /**
+   * @brief Check if name is emtpy
+   */
+  bool
+  empty() const { return components_.empty(); }
   
   /**
    * Get the number of components.
@@ -582,7 +641,13 @@ public:
    * @return The name component at the index.
    */
   const Component& 
-  get(size_t i) const { return components_[i]; }
+  get(ssize_t i) const
+  {
+    if (i >= 0)
+      return components_[i];
+    else
+      return components_[size() + i];
+  }
   
 
   const Component&
@@ -651,7 +716,10 @@ public:
   typedef std::vector<Component>::reference reference;
   typedef std::vector<Component>::const_reference const_reference;
 
-  typedef Component partial_type;
+  typedef std::vector<Component>::difference_type difference_type;
+  typedef std::vector<Component>::size_type size_type;
+  
+  typedef std::vector<Component>::value_type value_type;
 
   /**
    * Begin iterator (const).
@@ -703,13 +771,26 @@ public:
 
 private:
   std::vector<Component> components_;
-};  
 
-inline std::ostream&
-operator << (std::ostream& os, const Name& name)
+  mutable Block wire_;
+};
+
+std::ostream &
+operator << (std::ostream &os, const Name &name);
+
+inline std::ostream &
+operator << (std::ostream &os, const Name::Component &component)
 {
-  os << name.toUri();
+  component.toEscapedString(os);
   return os;
+}
+
+inline std::string 
+Name::toUri() const
+{
+  std::ostringstream os;
+  os << *this;
+  return os.str();
 }
 
 }

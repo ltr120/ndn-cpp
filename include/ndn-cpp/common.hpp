@@ -12,16 +12,35 @@
 // common.h include ndn-cpp-config.h.
 #include "c/common.h"
 
+#if NDN_CPP_HAVE_CXX11
+
+#if (__cplusplus < 201103L)
+#error "NDN-CPP library is configured and compiled in C++11 mode, but the current compiler is not C++11 enabled"
+#endif
+
 // Depending on where ./configure found shared_ptr, define the ptr_lib namespace.
 // We always use ndn::ptr_lib.
-#if NDN_CPP_HAVE_STD_SHARED_PTR
+// #if NDN_CPP_HAVE_STD_SHARED_PTR
 #include <memory>
 namespace ndn { namespace ptr_lib = std; }
-#elif NDN_CPP_HAVE_BOOST_SHARED_PTR
+
+// #if NDN_CPP_HAVE_STD_FUNCTION
+#include <functional>
+namespace ndn { namespace func_lib = std; }
+
+#elif NDN_CPP_USE_SYSTEM_BOOST
+
+// #if NDN_CPP_HAVE_BOOST_SHARED_PTR
 #include <boost/shared_ptr.hpp>
 #include <boost/make_shared.hpp>
 namespace ndn { namespace ptr_lib = boost; }
-#else
+
+// #if NDN_CPP_HAVE_BOOST_FUNCTION
+#include <boost/function.hpp>
+#include <boost/bind.hpp>
+namespace ndn { namespace func_lib = boost; }
+
+#else // use embedded boost headers
 /* Use the boost header files in this distribution that were extracted with:
 cd <BOOST DEVELOPMENT DIRECTORY WITH boost SUBDIRECTORY>
 dist/bin/bcp --namespace=ndnboost shared_ptr make_shared weak_ptr function bind any iostreams <NDN-CPP ROOT>/include
@@ -46,22 +65,12 @@ cd ndnboost
 #include <ndnboost/shared_ptr.hpp>
 #include <ndnboost/make_shared.hpp>
 namespace ndn { namespace ptr_lib = ndnboost; }
-#endif
 
-// Depending on where ./configure found function, define the func_lib namespace.
-// We always use ndn::func_lib.
-#if NDN_CPP_HAVE_STD_FUNCTION
-#include <functional>
-namespace ndn { namespace func_lib = std; }
-#elif NDN_CPP_HAVE_BOOST_FUNCTION
-#include <boost/function.hpp>
-#include <boost/bind.hpp>
-namespace ndn { namespace func_lib = boost; }
-#else
 // Use the boost header files in this distribution that were extracted as above:
 #include <ndnboost/function.hpp>
 #include <ndnboost/bind.hpp>
 namespace ndn { namespace func_lib = ndnboost; }
+
 #endif
 
 namespace ndn {
@@ -69,12 +78,12 @@ namespace ndn {
 /**
  * A time interval represented as the number of milliseconds.
  */
-typedef double Milliseconds;
+typedef int64_t Milliseconds;
    
 /**
  * The calendar time represented as the number of milliseconds since 1/1/1970.
  */
-typedef double MillisecondsSince1970;
+typedef int64_t MillisecondsSince1970;
 
 /**
  * Return the hex representation of the bytes in array.
@@ -83,6 +92,9 @@ typedef double MillisecondsSince1970;
  */
 std::string 
 toHex(const std::vector<uint8_t>& array);
+
+MillisecondsSince1970
+getNow();
 
 }
 

@@ -8,139 +8,259 @@
 #include <stdexcept>
 #include <ndn-cpp/common.hpp>
 #include <ndn-cpp/interest.hpp>
-#include "c/interest.h"
+
+#if __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreorder"
+#pragma clang diagnostic ignored "-Wtautological-compare"
+#pragma clang diagnostic ignored "-Wunused-variable"
+#pragma clang diagnostic ignored "-Wunused-function"
+#elif __GNUC__
+#pragma GCC diagnostic ignored "-Wreorder"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+
+#include <cryptopp/osrng.h>
 
 using namespace std;
 
 namespace ndn {
-  
-void 
-Exclude::Entry::get(struct ndn_ExcludeEntry& excludeEntryStruct) const 
+
+const Milliseconds DEFAULT_INTEREST_LIFETIME = 4000;
+
+const uint32_t&
+Interest::getNonce() const
 {
-  excludeEntryStruct.type = type_;
-  if (type_ == ndn_Exclude_COMPONENT)
-    component_.get(excludeEntryStruct.component);
+  static CryptoPP::AutoSeededRandomPool rng;
+
+  if (nonce_ == 0)
+    nonce_ = rng.GenerateWord32();
+
+  return nonce_;
 }
 
-void 
-Exclude::get(struct ndn_Exclude& excludeStruct) const
+
+bool
+Interest::matchesName(const Name &name) const
 {
-  if (excludeStruct.maxEntries < entries_.size())
-    throw runtime_error("excludeStruct.maxEntries must be >= this exclude getEntryCount()");
+  if (!name_.isPrefixOf(name))
+    return false;
   
-  excludeStruct.nEntries = entries_.size();
-  for (size_t i = 0; i < excludeStruct.nEntries; ++i)
-    entries_[i].get(excludeStruct.entries[i]);  
+  if (minSuffixComponents_ >= 0 &&
+    // Add 1 for the implicit digest.
+      !(name.size() + 1 - name_.size() >= minSuffixComponents_))
+    return false;
+
+  if (maxSuffixComponents_ >= 0 &&
+    // Add 1 for the implicit digest.
+    !(name.size() + 1 - name_.size() <= maxSuffixComponents_))
+    return false;
+
+  if (!exclude_.empty() && name.size() > name_.size() &&
+      exclude_.isExcluded(name[name_.size()]))
+    return false;
+
+  return true;
 }
 
-void 
-Exclude::set(const struct ndn_Exclude& excludeStruct)
+std::ostream &
+operator << (std::ostream &os, const Interest &interest)
 {
-  entries_.clear();
-  for (size_t i = 0; i < excludeStruct.nEntries; ++i) {
-    ndn_ExcludeEntry *entry = &excludeStruct.entries[i];
+  os << interest.getName();
+
+  char delim = '?';
+
+  if (interest.getMinSuffixComponents() >= 0) {
+    os << delim << "ndn.MinSuffixComponents=" << interest.getMinSuffixComponents();
+    delim = '&';
+  }
+  if (interest.getMaxSuffixComponents() >= 0) {
+    os << delim << "ndn.MaxSuffixComponents=" << interest.getMaxSuffixComponents();
+    delim = '&';
+  }
+  if (interest.getChildSelector() >= 0) {
+    os << delim << "ndn.ChildSelector=" << interest.getChildSelector();
+    delim = '&';
+  }
+  if (interest.getMustBeFresh()) {
+    os << delim << "ndn.MustBeFresh=" << interest.getMustBeFresh();
+    delim = '&';
+  }
+  if (interest.getScope() >= 0) {
+    os << delim << "ndn.Scope=" << interest.getScope();
+    delim = '&';
+  }
+  if (interest.getInterestLifetime() >= 0 && interest.getInterestLifetime() != DEFAULT_INTEREST_LIFETIME) {
+    os << delim << "ndn.InterestLifetime=" << interest.getInterestLifetime();
+    delim = '&';
+  }
+
+  if (interest.getNonce() > 0) {
+    os << delim << "ndn.Nonce=" << interest.getNonce();
+    delim = '&';
+  }
+  if (!interest.getExclude().empty()) {
+    os << delim << "ndn.Exclude=" << interest.getExclude();
+    delim = '&';
+  }
+
+  return os;
+}
+
+const Block&
+Interest::wireEncode() const
+{
+  if (wire_.hasWire())
+    return wire_;
+
+  // Interest ::= INTEREST-TYPE TLV-LENGTH
+  //                Name
+  //                Selectors?
+  //                Nonce
+  //                Scope?
+  //                InterestLifetime?  
+  
+  wire_ = Block(Tlv::Interest);
+  wire_.push_back(getName().wireEncode());
+
+  // selectors
+  {
+    Block selectors(Tlv::Selectors);
     
-    if (entry->type == ndn_Exclude_COMPONENT)
-      appendComponent(entry->component.value.value, entry->component.value.length);
-    else if (entry->type == ndn_Exclude_ANY)
-      appendAny();
-    else
-      throw runtime_error("unrecognized ndn_ExcludeType");
+    if (getMinSuffixComponents() >= 0) {
+      selectors.push_back
+        (nonNegativeIntegerBlock(Tlv::MinSuffixComponents, getMinSuffixComponents()));
+    }
+    if (getMaxSuffixComponents() >= 0) {
+      selectors.push_back
+        (nonNegativeIntegerBlock(Tlv::MaxSuffixComponents, getMaxSuffixComponents()));
+    }
+    if (!getExclude().empty()) {
+      selectors.push_back
+        (getExclude().wireEncode());
+    }
+    if (getChildSelector() >= 0) {
+      selectors.push_back
+        (nonNegativeIntegerBlock(Tlv::ChildSelector, getChildSelector()));
+    }
+    if (getMustBeFresh()) {
+      selectors.push_back
+        (booleanBlock(Tlv::MustBeFresh));
+    }
+
+    if (!selectors.getAll().empty())
+      {
+        selectors.encode();
+        wire_.push_back(selectors);
+      }
   }
-}
 
-string 
-Exclude::toUri() const
-{
-  if (entries_.size() == 0)
-    return "";
+  // Nonce
+  {
+    wire_.push_back
+      (nonNegativeIntegerBlock(Tlv::Nonce, getNonce()));
+  }
 
-  ostringstream result;
-  for (unsigned i = 0; i < entries_.size(); ++i) {
-    if (i > 0)
-      result << ",";
-        
-    if (entries_[i].getType() == ndn_Exclude_ANY)
-      result << "*";
-    else
-      Name::toEscapedString(*entries_[i].getComponent().getValue(), result);
+  // Scope
+  if (getScope() >= 0) {
+    wire_.push_back
+      (nonNegativeIntegerBlock(Tlv::Scope, getScope()));
+  }
+
+  // InterestLifetime
+  if (getInterestLifetime() >= 0 && getInterestLifetime() != DEFAULT_INTEREST_LIFETIME) {
+    wire_.push_back
+      (nonNegativeIntegerBlock(Tlv::InterestLifetime, getInterestLifetime()));
   }
   
-  return result.str();  
+  wire_.encode();
+  return wire_;
 }
-
+  
 void 
-Interest::set(const struct ndn_Interest& interestStruct) 
+Interest::wireDecode(const Block &wire) 
 {
-  name_.set(interestStruct.name);
-  minSuffixComponents_ = interestStruct.minSuffixComponents;
-  maxSuffixComponents_ = interestStruct.maxSuffixComponents;
+  wire_ = wire;
+  wire_.parse();
+
+  // Interest ::= INTEREST-TYPE TLV-LENGTH
+  //                Name
+  //                Selectors?
+  //                Nonce
+  //                Scope?
+  //                InterestLifetime?  
   
-  publisherPublicKeyDigest_.set(interestStruct.publisherPublicKeyDigest);
+  // Name
+  name_.wireDecode(wire_.get(Tlv::Name));
+
+  // Selectors
+  Block::element_iterator selectors = wire_.find(Tlv::Selectors);
+  if (selectors != wire_.getAll().end())
+    {
+      selectors->parse();
+
+      // MinSuffixComponents
+      Block::element_iterator val = selectors->find(Tlv::MinSuffixComponents);
+      if (val != selectors->getAll().end())
+        {
+          minSuffixComponents_ = readNonNegativeInteger(*val);
+        }
+
+      // MaxSuffixComponents
+      val = selectors->find(Tlv::MaxSuffixComponents);
+      if (val != selectors->getAll().end())
+        {
+          maxSuffixComponents_ = readNonNegativeInteger(*val);
+        }
+
+      // Exclude
+      val = selectors->find(Tlv::Exclude);
+      if (val != selectors->getAll().end())
+        {
+          exclude_.wireDecode(*val);
+        }
+
+      // ChildSelector
+      val = selectors->find(Tlv::ChildSelector);
+      if (val != selectors->getAll().end())
+        {
+          childSelector_ = readNonNegativeInteger(*val);
+        }
+
+      //MustBeFresh aka AnswerOriginKind
+      val = selectors->find(Tlv::MustBeFresh);
+      if (val != selectors->getAll().end())
+        {
+          mustBeFresh_ = true;
+        }
+    }
   
-  exclude_.set(interestStruct.exclude);
-  childSelector_ = interestStruct.childSelector;
-  answerOriginKind_ = interestStruct.answerOriginKind;
-  scope_ = interestStruct.scope;
-  interestLifetimeMilliseconds_ = interestStruct.interestLifetimeMilliseconds;
-  nonce_ = Blob(interestStruct.nonce);
-}
+  // Nonce
+  Block::element_iterator val = wire_.find(Tlv::Nonce);
+  if (val != wire_.getAll().end())
+    {
+      nonce_ = readNonNegativeInteger(*val);
+    }
 
-void 
-Interest::get(struct ndn_Interest& interestStruct) const 
-{
-  name_.get(interestStruct.name);
-  interestStruct.minSuffixComponents = minSuffixComponents_;
-  interestStruct.maxSuffixComponents = maxSuffixComponents_;
-  publisherPublicKeyDigest_.get(interestStruct.publisherPublicKeyDigest);
-  exclude_.get(interestStruct.exclude);
-  interestStruct.childSelector = childSelector_;
-  interestStruct.answerOriginKind = answerOriginKind_;
-  interestStruct.scope = scope_;
-  interestStruct.interestLifetimeMilliseconds = interestLifetimeMilliseconds_;
-  nonce_.get(interestStruct.nonce);
-}
-
-string 
-Interest::toUri() const
-{
-  ostringstream selectors;
-
-  if (minSuffixComponents_ >= 0)
-    selectors << "&ndn.MinSuffixComponents=" << minSuffixComponents_;
-  if (maxSuffixComponents_ >= 0)
-    selectors << "&ndn.MaxSuffixComponents=" << maxSuffixComponents_;
-  if (childSelector_ >= 0)
-    selectors << "&ndn.ChildSelector=" << childSelector_;
-  if (answerOriginKind_ >= 0)
-    selectors << "&ndn.AnswerOriginKind=" << answerOriginKind_;
-  if (scope_ >= 0)
-    selectors << "&ndn.Scope=" << scope_;
-  if (interestLifetimeMilliseconds_ >= 0)
-    selectors << "&ndn.InterestLifetime=" << interestLifetimeMilliseconds_;
-  if (publisherPublicKeyDigest_.getPublisherPublicKeyDigest().size() > 0) {
-    selectors << "&ndn.PublisherPublicKeyDigest=";
-    Name::toEscapedString(*publisherPublicKeyDigest_.getPublisherPublicKeyDigest(), selectors);
-  }
-  if (nonce_.size() > 0) {
-    selectors << "&ndn.Nonce=";
-    Name::toEscapedString(*nonce_, selectors);
-  }
-  if (exclude_.size() > 0)
-    selectors << "&ndn.Exclude=" << exclude_.toUri();
-
-  ostringstream result;
-
-  result << name_.toUri();
-  string selectorsString(selectors.str());
-  if (selectorsString.size() > 0) {
-    // Replace the first & with ?.
-    result << "?";
-    result.write(&selectorsString[1], selectorsString.size() - 1);
-  }
+  // Scope
+  val = wire_.find(Tlv::Scope);
+  if (val != wire_.getAll().end())
+    {
+      scope_ = readNonNegativeInteger(*val);
+    }
   
-  return result.str();  
+  // InterestLifetime
+  val = wire_.find(Tlv::InterestLifetime);
+  if (val != wire_.getAll().end())
+    {
+      interestLifetime_ = readNonNegativeInteger(*val);
+    }
+  else
+    {
+      interestLifetime_ = DEFAULT_INTEREST_LIFETIME;
+    }
 }
 
-}
 
+}
